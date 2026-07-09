@@ -1,0 +1,47 @@
+name: sports-news-pipeline
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 minutes (GitHub's practical minimum)
+  workflow_dispatch:          # manual run button for testing
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests pillow
+
+      # Generate graphics and commit them FIRST so the raw URLs are
+      # live before the Instagram publish step references them.
+      - name: Run pipeline (dry run to generate assets)
+        run: python pipeline.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Commit new images and posted.json
+        run: |
+          git config user.name "pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add output/ posted.json
+          git diff --staged --quiet || git commit -m "pipeline: new posts $(date -u +%Y%m%dT%H%M)"
+          git push
+
+      - name: Publish to Instagram
+        run: python publish_pending.py
+        env:
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IMAGE_BASE_URL: ${{ secrets.IMAGE_BASE_URL }}
